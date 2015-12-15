@@ -1,0 +1,166 @@
+#! /usr/bin/env python
+
+# taken from http://trilema.com/2015/the-pgp-w-mode/
+
+# <blockquote> So, if presented with the -w switch, the thing should :
+#
+# Read either an indicated file, or else the default file (dictionary.txt ?), obtain n, m, k, l, p from the first line as csv.
+# Modulo its intended numeric output by the line count of that file, and piss out the word at that index in a loop until the whole number it's trying to pass has been so encoded, adding a space at every iteration
+# Take the resultant text, randomly add commas by n probability.
+# Take the resultant text, randomly add dashes by m probability.
+# Take the resultant text, randomly add full stops, question marks and exclamation points by k, l, p probability. Capitalize following word.
+# </blockquote>
+
+# I have decided to make a stand-alone tool which can encrypt or decrypt according to these requirements.
+# The probabilities for various punctuations should only be used for encryption, while the rest of the dictionary must remain consistent between the encrypting and decrypting steps, therefore I will have the dictionary be separate from the probability factors. A config file is then introduced to provide these values, along with other parameters for the program.
+# The dictionary should be a text file.
+
+import sys, os, random
+import config
+debug = config.debug
+
+dochelp = '''
+  Steganographic encryptor and decryptor v0.2
+
+  (C) 2015 Peter Lambert. You do not have, nor can you ever acquire the right to
+  use, copy or distribute this software ; Should you use this software for any
+  purpose, or copy and distribute it to anyone or in any manner, you are breaking
+  the laws of whatever soi-disant jurisdiction, and you promise to continue doing
+  so for the indefinite future.
+
+  __Use__:
+    "steg {d/e} inputfile [outputfile [dictionary]]"
+
+    [d/e] - Choose between decryption (d) or encryption (e).
+  
+    inputfile - Provide a file to decrypt or encrypt.
+
+    dictionary - If a file is not provided for use as the dictionary, then the
+    default file will be taken from the config file.
+
+  __Examples__:
+    ./steg d mymessage.txt hiddenmessage.txt mydict.txt
+      The file mymessage.txt is decrypted by using mydict.txt as a key.
+
+    ./steg e newmessage.txt
+      The file newmessage.txt is encrypted by using the default dictionary from
+      the config file as a key, and saving it to the default "out.txt".
+'''
+
+def decrypt(message, d):
+    ''' Decrypt a message file using the supplied dictionary. '''
+    ld = len(d)
+    # convert message into a list of words b
+    file = open(message, 'r')
+    b = file.read().lower().strip().split(' ')
+    file.close()
+    for k in range(len(b)):
+        if b[k][-1] in ','+config.punc[0]:
+            b[k] = b[k][:-1]
+    b.reverse()
+    myint = 0
+    for k in b:
+        myint *= ld
+        if k in d:
+             myint += d.index(k)
+        else:
+            print "Unable to find %s in dictionary. Check that you are using the right file." % (k)
+            return "Unable to decrypt file."
+    mymess = ''
+    while myint > 0:
+        mymess = chr(myint % 128) + mymess
+        myint /= 128
+    return mymess
+
+def encrypt(message, d):
+    ''' Encrypt a message using the supplied dictionary. '''
+    ld = len(d)
+    # convert message into an integer, q
+    q = str_to_int(message)
+    mesbuf = []
+    punchoice = []
+    for k in range(min(len(config.punc[0]), len(config.punc[1]))):
+        punchoice += [config.punc[0][k]]*config.punc[1][k]
+
+    while q > 0:
+        mesbuf.append(d[q%ld])
+        q = (q / ld)
+    if mesbuf:
+        mesbuf[0] = mesbuf[0].capitalize()
+        mesbuf[-1] = mesbuf[-1] + random.choice(punchoice)
+        for k in range(len(mesbuf)-1):
+            if random.random() < config.com:
+                mesbuf[k] += ','
+            elif random.random() < config.per:
+                mesbuf[k] += random.choice(punchoice)
+                mesbuf[k+1] = mesbuf[k+1].capitalize()
+    return ' '.join(mesbuf)
+
+def str_to_int(filename):
+    ''' Convert a string of ascii to a long integer. '''
+    nmess = 0L
+    smess = open(filename, 'r')
+    for k in smess.read():
+        nmess *= 128
+        nmess += ord(k)
+    smess.close()
+    return nmess
+     
+def readydictionary(filename):
+    table = []
+    f = open(filename, 'r')
+    for line in f.readlines():
+        for word in line.lower().strip().split(' '):
+            check = ''
+            for k in word:
+                if k.isalpha():
+                    check += k
+            if check and check not in table:
+                table.append(check)
+    f.close()
+    return table
+    
+if __name__ == "__main__":
+    if len(sys.argv) < 3:
+        print dochelp
+    else:
+        if sys.argv[1] not in ['d', 'e', 'D', 'E']:
+            print 'Please choose d or e.'
+        else:
+            if len(sys.argv) > 4 and os.path.isfile(sys.argv[3]):
+                mydictfile = sys.argv[4]
+            else:
+                mydictfile = config.defaultdict
+            if debug:
+                print 'Using dictionary: %s'%mydictfile
+            mydict = readydictionary(mydictfile)
+            if len(sys.argv) > 3:
+                if os.path.isfile(sys.argv[3]):
+                    if debug:
+                        print 'Warning: output file already exists.'
+                    if config.overwrite:
+                        output = sys.argv[3]
+                    else:
+                        n = 0
+                        while os.path.isfile(sys.argv[3]+str(n)):
+                            n += 1
+                        output = sys.argv[3]+str(n)
+                        if debug:
+                            print 'Output to file: %s'%output
+                else:
+                    output = sys.argv[3]
+            else:
+                output = config.output
+            stuff = sys.argv[2]
+            if os.path.isfile(stuff):
+                bag = open(output, 'w')
+                if sys.argv[1] == 'd' or sys.argv[1] == 'D':
+                    bag.write(decrypt(stuff, mydict))
+                elif sys.argv[1] == 'e' or sys.argv[1] == 'E':
+                    bag.write(encrypt(stuff, mydict))
+                else:
+                    print 'Choose d or e.'
+                bag.close()
+            else:
+                print "Could not find file %s.\n" % (stuff)
+            
